@@ -25,8 +25,8 @@ class Migration(migrations.Migration):
             name='Transaction',
             fields=[
                 ('id', models.UUIDField(default=uuid.UUID('5f8f7130-fc80-4cf1-a501-0c856163e6b2'), editable=False, primary_key=True, serialize=False)),
-                ('status', models.CharField(blank=True, choices=[(items.models.TransactionStatus('Processing'), 'Processing'), (items.models.TransactionStatus('Completed'), 'Completed'), (items.models.TransactionStatus('Error'), 'Error')], max_length=20, null=True)),
-                ('location', models.CharField(blank=True, choices=[(items.models.TransactionLocation('Origination Bank'), 'Origination Bank'), (items.models.TransactionLocation('Routable'), 'Routable'), (items.models.TransactionLocation('Destination Bank'), 'Destination Bank')], max_length=20, null=True)),
+                ('status', models.CharField(blank=True, choices=[('processing', 'Processing'), ('completed', 'Completed'), ('error', 'Error')], max_length=20, null=True)),
+                ('location', models.CharField(blank=True, choices=[('origination_bank', 'Origination Bank'), ('routable', 'Routable'), ('destination_bank', 'Destination Bank')], max_length=20, null=True)),
                 ('create_date', models.DateTimeField(auto_now_add=True)),
                 ('item', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='transactions', to='items.Item')),
             ],

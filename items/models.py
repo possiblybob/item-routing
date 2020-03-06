@@ -59,30 +59,44 @@ class Item(models.Model):
         return self
 
 
-class TransactionEnum(Enum):
-    """common enumeration for Transaction values"""
+class TransactionChoices(object):
+    """base set of choices for Transactions"""
 
     @classmethod
     def choices(cls):
-        return tuple((i.name, i.value) for i in cls)
+        """defines available choices built using per-type values"""
+
+
+class TransactionLocation(object):
+    """a given location for funds in a Transaction"""
+    ORIGINATOR_BANK = 'originator_bank'
+    ROUTABLE = 'routable'
+    DESTINATION_BANK = 'destination_bank'
 
     @classmethod
-    def from_name(cls, name):
-        return cls[name]
+    def choices(cls):
+        """selectable choices for Locations"""
+        return (
+            (TransactionLocation.ORIGINATOR_BANK, 'Originator Bank'),
+            (TransactionLocation.ROUTABLE, 'Routable'),
+            (TransactionLocation.DESTINATION_BANK, 'Destination Bank'),
+        )
 
 
-class TransactionLocation(TransactionEnum):
-    """a given location for funds in a Transaction"""
-    originator_bank = 'Origination Bank'
-    routable = 'Routable'
-    destination_bank = 'Destination Bank'
-
-
-class TransactionStatus(TransactionEnum):
+class TransactionStatus(object):
     """a given status for funds in a Transaction"""
-    processing = 'Processing'
-    completed = 'Completed'
-    error = 'Error'
+    PROCESSING = 'processing'
+    COMPLETED = 'completed'
+    ERROR = 'error'
+
+    @classmethod
+    def choices(cls):
+        """selectable choices for Locations"""
+        return (
+            (TransactionStatus.PROCESSING, 'Processing'),
+            (TransactionStatus.COMPLETED, 'Completed'),
+            (TransactionStatus.ERROR, 'Error'),
+        )
 
 
 class Transaction(models.Model):
@@ -92,10 +106,10 @@ class Transaction(models.Model):
     update_date = models.DateTimeField(auto_now=True)
     item = models.ForeignKey(Item, related_name='transactions', on_delete=models.CASCADE)
     status = models.CharField(
-        max_length=20, choices=TransactionStatus.choices(), default=TransactionStatus.processing.name
+        max_length=20, choices=TransactionStatus.choices(), default=TransactionStatus.PROCESSING
     )
     location = models.CharField(
-        max_length=20, choices=TransactionLocation.choices(), default=TransactionLocation.originator_bank.name
+        max_length=20, choices=TransactionLocation.choices(), default=TransactionLocation.ORIGINATOR_BANK
     )
     is_active = models.BooleanField(default=True)
 
@@ -118,28 +132,23 @@ class Transaction(models.Model):
 
     def move(self):
         """moves Transaction from current state to next"""
-        status = self.get_status()
-        location = self.get_location()
-
         # ensure Transaction is not already completed
-        if status in (TransactionStatus.completed, TransactionStatus.error):
+        if self.status in (TransactionStatus.COMPLETED, TransactionStatus.ERROR):
             raise InvalidStateTransitionError('Transaction is not in a state that can be moved.')
 
-        if location == TransactionLocation.originator_bank:
+        if self.location == TransactionLocation.ORIGINATOR_BANK:
             # move to internal processing state
-            self.location = TransactionLocation.routable.name
-        elif location == TransactionLocation.routable:
+            self.location = TransactionLocation.ROUTABLE
+        elif self.location == TransactionLocation.ROUTABLE:
             # move to completed bank state
-            self.location = TransactionLocation.destination_bank.name
-            self.status = TransactionStatus.completed.name
+            self.location = TransactionLocation.DESTINATION_BANK
+            self.status = TransactionStatus.COMPLETED
         self.save()
 
     def error(self):
         """moves Transaction from current state to error state"""
-        status = self.get_status()
-        location = self.get_location()
-        if not (status == TransactionStatus.processing and location == TransactionLocation.routable):
+        if not (self.status == TransactionStatus.PROCESSING and self.location == TransactionLocation.ROUTABLE):
             raise InvalidStateTransitionError('Transaction is not in a state that can be marked as errored.')
-        self.location = TransactionLocation.routable.name
-        self.status = TransactionStatus.error.name
+        self.location = TransactionLocation.ROUTABLE
+        self.status = TransactionStatus.ERROR
         self.save()

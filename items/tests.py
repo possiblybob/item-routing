@@ -54,18 +54,18 @@ class ItemTestCase(UUIDTestCase):
         item.create_transaction()
 
         # verify initial state
-        self.assertEqual(item.transaction.get_status(), TransactionStatus.processing)
-        self.assertEqual(item.transaction.get_location(), TransactionLocation.originator_bank)
+        self.assertEqual(item.transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(item.transaction.location, TransactionLocation.ORIGINATOR_BANK)
 
         # verify progressed to next state
         item.move()
-        self.assertEqual(item.transaction.get_status(), TransactionStatus.processing)
-        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
+        self.assertEqual(item.transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(item.transaction.location, TransactionLocation.ROUTABLE)
 
         # verify progressed to final success state
         item.move()
-        self.assertEqual(item.transaction.get_status(), TransactionStatus.completed)
-        self.assertEqual(item.transaction.get_location(), TransactionLocation.destination_bank)
+        self.assertEqual(item.transaction.status, TransactionStatus.COMPLETED)
+        self.assertEqual(item.transaction.location, TransactionLocation.DESTINATION_BANK)
 
         # verify move from completed state is invalid
         with self.assertRaises(InvalidStateTransitionError):
@@ -76,8 +76,8 @@ class ItemTestCase(UUIDTestCase):
         item.create_transaction()  # processing/originator
         item.move()  # processing/routable
         item.error()  # error/routable
-        self.assertEqual(item.transaction.get_status(), TransactionStatus.error)
-        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
+        self.assertEqual(item.transaction.status, TransactionStatus.ERROR)
+        self.assertEqual(item.transaction.location, TransactionLocation.ROUTABLE)
         with self.assertRaises(InvalidStateTransitionError):
             item.move()
 
@@ -97,13 +97,13 @@ class ItemTestCase(UUIDTestCase):
             item.error()
 
         item.move()
-        self.assertEqual(item.transaction.get_status(), TransactionStatus.processing)
-        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
+        self.assertEqual(item.transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(item.transaction.location, TransactionLocation.ROUTABLE)
 
         # verify erroring in processing state moves to correct state
         item.error()
-        self.assertEqual(item.transaction.get_status(), TransactionStatus.error)
-        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
+        self.assertEqual(item.transaction.status, TransactionStatus.ERROR)
+        self.assertEqual(item.transaction.location, TransactionLocation.ROUTABLE)
 
         # verify erroring in errored state is invalid
         with self.assertRaises(InvalidStateTransitionError):
@@ -168,10 +168,10 @@ class TransactionTestCase(UUIDTestCase):
         create_kwargs = {
             'item': self.test_item
         }
-        if initial_status is not None and isinstance(initial_status, TransactionStatus):
-            create_kwargs['status'] = initial_status.name
-        if initial_location is not None and isinstance(initial_location, TransactionLocation):
-            create_kwargs['location'] = initial_location.name
+        if initial_status is not None:
+            create_kwargs['status'] = initial_status
+        if initial_location is not None:
+            create_kwargs['location'] = initial_location
         return Transaction.objects.create(**create_kwargs)
 
     def test_id_is_uuid(self):
@@ -181,7 +181,7 @@ class TransactionTestCase(UUIDTestCase):
         self.assertTrue(self.is_uuid(transaction.id))
 
     def test_mark_inactive(self):
-        """tests marking Tranaction as inactive updates status"""
+        """tests marking Transaction as inactive updates status"""
         transaction = self._create_transaction()
         self.assertTrue(transaction.is_active)
         transaction.mark_inactive()
@@ -192,18 +192,18 @@ class TransactionTestCase(UUIDTestCase):
         transaction = self._create_transaction()
 
         # verify initial state
-        self.assertEqual(transaction.get_status(), TransactionStatus.processing)
-        self.assertEqual(transaction.get_location(), TransactionLocation.originator_bank)
+        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(transaction.location, TransactionLocation.ORIGINATOR_BANK)
 
         # verify progressed to next state
         transaction.move()
-        self.assertEqual(transaction.get_status(), TransactionStatus.processing)
-        self.assertEqual(transaction.get_location(), TransactionLocation.routable)
+        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(transaction.location, TransactionLocation.ROUTABLE)
 
         # verify progressed to final success state
         transaction.move()
-        self.assertEqual(transaction.get_status(), TransactionStatus.completed)
-        self.assertEqual(transaction.get_location(), TransactionLocation.destination_bank)
+        self.assertEqual(transaction.status, TransactionStatus.COMPLETED)
+        self.assertEqual(transaction.location, TransactionLocation.DESTINATION_BANK)
 
         # verify move from final status is invalid
         with self.assertRaises(InvalidStateTransitionError):
@@ -219,15 +219,15 @@ class TransactionTestCase(UUIDTestCase):
 
         # verify erroring at Routable/processing state leads to error state
         processing_routable = self._create_transaction(
-            initial_location=TransactionLocation.routable, initial_status=TransactionStatus.processing
+            initial_location=TransactionLocation.ROUTABLE, initial_status=TransactionStatus.PROCESSING
         )
         processing_routable.error()
-        self.assertEqual(processing_routable.get_status(), TransactionStatus.error)
-        self.assertEqual(processing_routable.get_location(), TransactionLocation.routable)
+        self.assertEqual(processing_routable.status, TransactionStatus.ERROR)
+        self.assertEqual(processing_routable.location, TransactionLocation.ROUTABLE)
 
         # verify erroring at Destination/completed is invalid
         destination_completed = self._create_transaction(
-            initial_location=TransactionLocation.destination_bank, initial_status=TransactionStatus.completed
+            initial_location=TransactionLocation.DESTINATION_BANK, initial_status=TransactionStatus.COMPLETED
         )
         with self.assertRaises(InvalidStateTransitionError):
             destination_completed.error()

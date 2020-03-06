@@ -25,11 +25,11 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='transaction',
             name='location',
-            field=models.CharField(choices=[('originator_bank', 'Origination Bank'), ('routable', 'Routable'), ('destination_bank', 'Destination Bank')], default=items.models.TransactionLocation('Origination Bank'), max_length=20),
+            field=models.CharField(choices=[('originator_bank', 'Origination Bank'), ('routable', 'Routable'), ('destination_bank', 'Destination Bank')], default='origination_bank', max_length=20),
         ),
         migrations.AlterField(
             model_name='transaction',
             name='status',
-            field=models.CharField(choices=[('processing', 'Processing'), ('completed', 'Completed'), ('error', 'Error')], default=items.models.TransactionStatus('Processing'), max_length=20),
+            field=models.CharField(choices=[('processing', 'Processing'), ('completed', 'Completed'), ('error', 'Error')], default='processing', max_length=20),
         ),
     ]
