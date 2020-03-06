@@ -2,6 +2,9 @@ from django.test import TestCase
 from decimal import Decimal
 from items.models import Item, Transaction, TransactionLocation, TransactionStatus, \
     InvalidStateTransitionError
+from rest_framework import status
+from rest_framework.test import APIClient
+from urllib.parse import urljoin
 from uuid import UUID
 
 
@@ -51,18 +54,18 @@ class ItemTestCase(UUIDTestCase):
         item.create_transaction()
 
         # verify initial state
-        self.assertEqual(item.transaction.status, TransactionStatus.processing)
-        self.assertEqual(item.transaction.location, TransactionLocation.originator_bank)
+        self.assertEqual(item.transaction.get_status(), TransactionStatus.processing)
+        self.assertEqual(item.transaction.get_location(), TransactionLocation.originator_bank)
 
         # verify progressed to next state
         item.move()
-        self.assertEqual(item.transaction.status, TransactionStatus.processing)
-        self.assertEqual(item.transaction.location, TransactionLocation.routable)
+        self.assertEqual(item.transaction.get_status(), TransactionStatus.processing)
+        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
 
         # verify progressed to final success state
         item.move()
-        self.assertEqual(item.transaction.status, TransactionStatus.completed)
-        self.assertEqual(item.transaction.location, TransactionLocation.destination_bank)
+        self.assertEqual(item.transaction.get_status(), TransactionStatus.completed)
+        self.assertEqual(item.transaction.get_location(), TransactionLocation.destination_bank)
 
         # verify move from completed state is invalid
         with self.assertRaises(InvalidStateTransitionError):
@@ -73,8 +76,8 @@ class ItemTestCase(UUIDTestCase):
         item.create_transaction()  # processing/originator
         item.move()  # processing/routable
         item.error()  # error/routable
-        self.assertEqual(item.transaction.status, TransactionStatus.error)
-        self.assertEqual(item.transaction.location, TransactionLocation.routable)
+        self.assertEqual(item.transaction.get_status(), TransactionStatus.error)
+        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
         with self.assertRaises(InvalidStateTransitionError):
             item.move()
 
@@ -94,13 +97,13 @@ class ItemTestCase(UUIDTestCase):
             item.error()
 
         item.move()
-        self.assertEqual(item.transaction.status, TransactionStatus.processing)
-        self.assertEqual(item.transaction.location, TransactionLocation.routable)
+        self.assertEqual(item.transaction.get_status(), TransactionStatus.processing)
+        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
 
         # verify erroring in processing state moves to correct state
         item.error()
-        self.assertEqual(item.transaction.status, TransactionStatus.error)
-        self.assertEqual(item.transaction.location, TransactionLocation.routable)
+        self.assertEqual(item.transaction.get_status(), TransactionStatus.error)
+        self.assertEqual(item.transaction.get_location(), TransactionLocation.routable)
 
         # verify erroring in errored state is invalid
         with self.assertRaises(InvalidStateTransitionError):
@@ -165,10 +168,10 @@ class TransactionTestCase(UUIDTestCase):
         create_kwargs = {
             'item': self.test_item
         }
-        if initial_status is not None:
-            create_kwargs['status'] = initial_status
-        if initial_location is not None:
-            create_kwargs['location'] = initial_location
+        if initial_status is not None and isinstance(initial_status, TransactionStatus):
+            create_kwargs['status'] = initial_status.name
+        if initial_location is not None and isinstance(initial_location, TransactionLocation):
+            create_kwargs['location'] = initial_location.name
         return Transaction.objects.create(**create_kwargs)
 
     def test_id_is_uuid(self):
@@ -189,18 +192,18 @@ class TransactionTestCase(UUIDTestCase):
         transaction = self._create_transaction()
 
         # verify initial state
-        self.assertEqual(transaction.status, TransactionStatus.processing)
-        self.assertEqual(transaction.location, TransactionLocation.originator_bank)
+        self.assertEqual(transaction.get_status(), TransactionStatus.processing)
+        self.assertEqual(transaction.get_location(), TransactionLocation.originator_bank)
 
         # verify progressed to next state
         transaction.move()
-        self.assertEqual(transaction.status, TransactionStatus.processing)
-        self.assertEqual(transaction.location, TransactionLocation.routable)
+        self.assertEqual(transaction.get_status(), TransactionStatus.processing)
+        self.assertEqual(transaction.get_location(), TransactionLocation.routable)
 
         # verify progressed to final success state
         transaction.move()
-        self.assertEqual(transaction.status, TransactionStatus.completed)
-        self.assertEqual(transaction.location, TransactionLocation.destination_bank)
+        self.assertEqual(transaction.get_status(), TransactionStatus.completed)
+        self.assertEqual(transaction.get_location(), TransactionLocation.destination_bank)
 
         # verify move from final status is invalid
         with self.assertRaises(InvalidStateTransitionError):
@@ -219,8 +222,8 @@ class TransactionTestCase(UUIDTestCase):
             initial_location=TransactionLocation.routable, initial_status=TransactionStatus.processing
         )
         processing_routable.error()
-        self.assertEqual(processing_routable.status, TransactionStatus.error)
-        self.assertEqual(processing_routable.location, TransactionLocation.routable)
+        self.assertEqual(processing_routable.get_status(), TransactionStatus.error)
+        self.assertEqual(processing_routable.get_location(), TransactionLocation.routable)
 
         # verify erroring at Destination/completed is invalid
         destination_completed = self._create_transaction(
@@ -228,3 +231,149 @@ class TransactionTestCase(UUIDTestCase):
         )
         with self.assertRaises(InvalidStateTransitionError):
             destination_completed.error()
+
+
+class ItemApiTestCase(TestCase):
+    """tests interactions with Items via the API"""
+    def setUp(self):
+        """initial setup for all Item API tests"""
+        self.client = APIClient()
+        self.api_root = u'/api/v1/items/'
+        self.request_format = 'json'
+
+    def _make_post(self, endpoint_url, data=None):
+        """makes POST request with the given data to the provided endpoint"""
+        return self.client.post(
+            endpoint_url,
+            data=data,
+            format=self.request_format,
+            follow=True
+        )
+
+    def _make_put(self, endpoint_url, data=None):
+        """makes PUT request with the given data to the provided endpoint"""
+        return self.client.put(
+            endpoint_url,
+            data=data,
+            format=self.request_format,
+            follow=True
+        )
+
+    def _create_item(self, amount=None):
+        """creates an Item usable for testing"""
+        if amount is None:
+            amount = Decimal('1.29')
+        data = {
+            'amount': amount
+        }
+        return self._make_post(self.api_root, data)
+
+    def _create_item_transaction(self, item_url):
+        """creates a Transaction for the given Item"""
+        endpoint_url = urljoin(item_url, 'create_transaction/')
+        return self._make_post(endpoint_url)
+
+    def test_create_valid(self):
+        """tests creating an Item with a valid request succeeds"""
+        test_amount = Decimal('12.34')
+        response = self._create_item(amount=test_amount)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        response_data = response.data
+
+        # verify URL returned for new item
+        self.assertIn('url', response_data)
+
+        # verify null Transaction found
+        self.assertIn('transaction', response_data)
+        transaction = response_data['transaction']
+        self.assertIsNone(transaction)
+
+        # verify amount matches created value
+        response_amount = response_data.get('amount')
+        self.assertIsNotNone(response_amount)
+        try:
+            response_amount = Decimal(response_amount)
+        except ValueError:
+            self.fail('Response amount "{}" was not a valid Decimal'.format(response_amount))
+        else:
+            self.assertEqual(response_amount, test_amount)
+
+    def test_create_invalid(self):
+        """tests creating an Item with a invalid request errors appropriately"""
+        test_amount = 'bob'
+        response = self._create_item(amount=test_amount)
+        self.assertIsNotNone(response)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_data = response.data
+        # verify error for "amount" returned
+        self.assertIn('amount', response_data)
+
+    def test_create_transaction(self):
+        """tests creating a Transaction for an Item"""
+        response = self._create_item()
+        item_url = response.data['url']
+        response = self._create_item_transaction(item_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # verify success status message returned
+        self.assertIn('status', response.data)
+
+        # verify Transaction URL found
+        self.assertIn('transaction', response.data)
+        transaction_url = response.data['transaction']
+        self.assertIsNotNone(transaction_url)
+
+    def test_move_valid(self):
+        """tests calling `move` for an Item in valid scenarios"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        move_url = urljoin(item_url, 'move/')
+        response = self._make_put(move_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_move_without_transaction_invalid(self):
+        """tests calling `move` for an Item without a Transaction is invalid"""
+        response = self._create_item()
+        item_url = response.data['url']
+
+        move_url = urljoin(item_url, 'move/')
+        response = self._make_put(move_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_move_after_complete_invalid(self):
+        """tests calling `move` for an Item that is Completed is invalid"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        move_url = urljoin(item_url, 'move/')
+        self._make_put(move_url)  # processing/routable
+        self._make_put(move_url)  # completed/destinaton
+
+        response = self._make_put(move_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_error_valid(self):
+        """tests calling `error` for an Item in processing/routable state is valid"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        move_url = urljoin(item_url, 'move/')
+        self._make_put(move_url)  # processing/routable
+        error_url = urljoin(item_url, 'error/')
+        response = self._make_put(error_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_error_without_transaction_invalid(self):
+        """tests calling `error` for an Item without a Transaction is invalid"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        error_url = urljoin(item_url, 'error/')
+        response = self._make_put(error_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
