@@ -82,6 +82,33 @@ class ItemViewSet(viewsets.ModelViewSet):
             response_data['status'] = 'Item errored'
             return Response(response_data)
 
+    @action(detail=True, methods=['put'])
+    def fix(self, request, pk=None):
+        """moves Item from the current state to the next"""
+        item = self.get_object()
+
+        try:
+            item.fix()
+        except InvalidStateTransitionError as ex:
+            return Response(
+                data={
+                    'error': str(ex)
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+                exception=True
+            )
+        else:
+            # response should have current Item values and success message
+            serializer = ItemSerializer(
+                item,
+                context={
+                    'request': request
+                }
+            )
+            response_data = serializer.data
+            response_data['status'] = 'Item fixed'
+            return Response(response_data)
+
 
 class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint viewing of Transactions"""

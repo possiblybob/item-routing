@@ -457,6 +457,8 @@ class ItemApiTestCase(TestCase):
         move_url = urljoin(item_url, 'move/')
         response = self._make_put(move_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(response.data)
+        self.assertIn('Item moved', str(response.data.get('status')))
 
     def test_move_without_transaction_invalid(self):
         """tests calling `move` for an Item without a Transaction is invalid"""
@@ -491,6 +493,8 @@ class ItemApiTestCase(TestCase):
         error_url = urljoin(item_url, 'error/')
         response = self._make_put(error_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(response.data)
+        self.assertEqual(response.data.get('status'), 'Item errored')
 
     def test_error_without_transaction_invalid(self):
         """tests calling `error` for an Item without a Transaction is invalid"""
@@ -500,4 +504,44 @@ class ItemApiTestCase(TestCase):
 
         error_url = urljoin(item_url, 'error/')
         response = self._make_put(error_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_fix_valid(self):
+        """tests calling `fix` for an Item in error/routable state is valid"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        move_url = urljoin(item_url, 'move/')
+        self._make_put(move_url)  # processing/routable
+        error_url = urljoin(item_url, 'error/')
+        self._make_put(error_url)  # error/routable
+
+        fix_url = urljoin(item_url, 'fix/')
+        response = self._make_put(fix_url)  # fixing/routable
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(response.data)
+        self.assertEqual(response.data.get('status'), 'Item fixed')
+
+    def test_fix_without_transaction_invalid(self):
+        """tests calling `fix` for an Item without a Transaction is invalid"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        fix_url = urljoin(item_url, 'fix/')
+        response = self._make_put(fix_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_fix_in_non_error_state_invalid(self):
+        """tests calling `fix` for an Item that not in an error state is invalid"""
+        response = self._create_item()
+        item_url = response.data['url']
+        self._create_item_transaction(item_url)
+
+        move_url = urljoin(item_url, 'move/')
+        self._make_put(move_url)  # processing/routable
+
+        fix_url = urljoin(item_url, 'fix/')
+        response = self._make_put(fix_url)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
