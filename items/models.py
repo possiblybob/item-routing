@@ -8,6 +8,32 @@ class InvalidStateTransitionError(Exception):
     """exception thrown when invalid transition is triggered"""
 
 
+class Choices(object):
+    """base set of choices for Transactions and Items"""
+
+    @classmethod
+    def choices(cls):
+        """defines available choices built using per-type values"""
+
+
+class ItemState(Choices):
+    """defines states for an Item relative to its associated Transaction"""
+    PROCESSING = 'processing'
+    CORRECTING = 'correcting'
+    ERROR = 'error'
+    RESOLVED = 'resolved'
+
+    @classmethod
+    def choices(cls):
+        """selectable choices for States"""
+        return (
+            (ItemState.PROCESSING, 'First Time Processing'),
+            (ItemState.CORRECTING, 'Any Unfinished Correction'),
+            (ItemState.ERROR, 'Error'),
+            (ItemState.RESOLVED, 'Positive Finish State'),
+        )
+
+
 class Item(models.Model):
     """a payment"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -18,6 +44,7 @@ class Item(models.Model):
     transaction = models.ForeignKey(
         'Transaction', null=True, blank=True, related_name='current_transaction', on_delete=models.SET_NULL
     )
+    state = models.CharField(max_length=20, choices=ItemState.choices(), default=ItemState.PROCESSING)
 
     @property
     def status(self):
@@ -59,15 +86,7 @@ class Item(models.Model):
         return self
 
 
-class TransactionChoices(object):
-    """base set of choices for Transactions"""
-
-    @classmethod
-    def choices(cls):
-        """defines available choices built using per-type values"""
-
-
-class TransactionLocation(object):
+class TransactionLocation(Choices):
     """a given location for funds in a Transaction"""
     ORIGINATOR_BANK = 'originator_bank'
     ROUTABLE = 'routable'
@@ -83,7 +102,7 @@ class TransactionLocation(object):
         )
 
 
-class TransactionStatus(object):
+class TransactionStatus(Choices):
     """a given status for funds in a Transaction"""
     PROCESSING = 'processing'
     COMPLETED = 'completed'
@@ -109,26 +128,28 @@ class Transaction(models.Model):
         max_length=20, choices=TransactionStatus.choices(), default=TransactionStatus.PROCESSING
     )
     location = models.CharField(
-        max_length=20, choices=TransactionLocation.choices(), default=TransactionLocation.ORIGINATOR_BANK
+        max_length=20, choices=TransactionLocation.choices(), default=TransactionLocation.ORIGINATOR_BANK,
     )
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Whether or not this Transaction is currently the active Transaction for its Item'
+    )
 
-    def get_location(self):
-        """converts stored location to enumerated type"""
-        if not self.location:
-            return None
-        return TransactionLocation.from_name(self.location)
+    def save(self, *args, **kwargs):
+        is_new = not self.id
+        result = super(Transaction, self).save(*args, **kwargs)
+        if is_new and self.item and self.item.state != ItemState.PROCESSING:
+            # Transaction just created - reset Item to processing from previous state
+            self.item.state = ItemState.PROCESSING
+            self.item.save()
 
-    def get_status(self):
-        """converts stored status to enumerated type"""
-        if not self.status:
-            return None
-        return TransactionStatus.from_name(self.status)
+        return result
 
     def mark_inactive(self):
         """changes current active status for Transaction to inactive"""
         self.is_active = False
         self.save()
+        self.update_item_status()
 
     def move(self):
         """moves Transaction from current state to next"""
@@ -144,6 +165,7 @@ class Transaction(models.Model):
             self.location = TransactionLocation.DESTINATION_BANK
             self.status = TransactionStatus.COMPLETED
         self.save()
+        self.update_item_status()
 
     def error(self):
         """moves Transaction from current state to error state"""
@@ -152,3 +174,19 @@ class Transaction(models.Model):
         self.location = TransactionLocation.ROUTABLE
         self.status = TransactionStatus.ERROR
         self.save()
+        self.update_item_status()
+
+    def update_item_status(self):
+        """updates item status based on current status"""
+        if not self.is_active:
+            # not currently the active Transaction for an Item so state change does not affect it
+            return
+
+        new_state = ItemState.PROCESSING
+        if self.status == TransactionStatus.ERROR:
+            new_state = ItemState.ERROR
+        elif self.status == TransactionStatus.COMPLETED:
+            new_state = ItemState.RESOLVED
+        if new_state != self.item.state:
+            self.item.state = new_state
+            self.item.save()
