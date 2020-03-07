@@ -81,6 +81,30 @@ class ItemTestCase(UUIDTestCase):
         with self.assertRaises(InvalidStateTransitionError):
             item.move()
 
+        # verify moving from fixing state returns to processing state
+        fixing_item = self._create_item()
+        fixing_item.create_transaction()  # processing/originator
+        fixing_item.move()  # processing/routable
+        fixing_item.error()  # error/routable
+        fixing_item.fix()  # fixing/routable
+        fixing_item.move()
+        self.assertEqual(fixing_item.transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(fixing_item.transaction.location, TransactionLocation.ROUTABLE)
+
+        # verify moving from refunding state returns to refunded state
+        refund_item = self._create_item()
+        refund_item.create_transaction()  # processing/originator
+        refund_item.move()  # processing/routable
+        refund_item.error()  # error/routable
+        refund_item.begin_refund()  # refunding/routable
+        refund_item.move()
+        self.assertEqual(refund_item.transaction.status, TransactionStatus.REFUNDED)
+        self.assertEqual(refund_item.transaction.location, TransactionLocation.ORIGINATOR_BANK)
+
+        # verify moving in refunded state is invalid
+        with self.assertRaises(InvalidStateTransitionError):
+            refund_item.move()
+
     def test_error(self):
         """tests error a Item progresses its current Transaction to the correct state"""
         item = self._create_item()
@@ -96,9 +120,7 @@ class ItemTestCase(UUIDTestCase):
         with self.assertRaises(InvalidStateTransitionError):
             item.error()
 
-        item.move()
-        self.assertEqual(item.transaction.status, TransactionStatus.PROCESSING)
-        self.assertEqual(item.transaction.location, TransactionLocation.ROUTABLE)
+        item.move()  # processing/routable
 
         # verify erroring in processing state moves to correct state
         item.error()
@@ -117,6 +139,34 @@ class ItemTestCase(UUIDTestCase):
 
         with self.assertRaises(InvalidStateTransitionError):
             item.error()
+
+        # verify erroring in fixing state is invalid
+        fixing_item = self._create_item()
+        fixing_item.create_transaction()  # processing/originator
+        fixing_item.move()  # processing/routable
+        fixing_item.error()  # error/routable
+        fixing_item.fix()  # fixing/routable
+
+        with self.assertRaises(InvalidStateTransitionError):
+            fixing_item.error()
+
+        #  verify erroring in refunding state is invalid
+        refund_item = self._create_item()
+        refund_item.create_transaction()  # processing/originator
+        refund_item.move()  # processing/routable
+        refund_item.error()  # error/routable
+        refund_item.begin_refund()  # refunding/routable
+
+        with self.assertRaises(InvalidStateTransitionError):
+            refund_item.error()
+
+        refund_item.move()
+        self.assertEqual(refund_item.transaction.status, TransactionStatus.REFUNDED)
+        self.assertEqual(refund_item.transaction.location, TransactionLocation.ORIGINATOR_BANK)
+
+        # verify erroring in refunded state is invalid
+        with self.assertRaises(InvalidStateTransitionError):
+            refund_item.error()
 
     def test_create_transaction(self):
         """creates a new Transaction, marking any previous transaction as inactive"""
@@ -143,17 +193,91 @@ class ItemTestCase(UUIDTestCase):
         transaction = Transaction.objects.get(id=transaction.pk)
         self.assertFalse(transaction.is_active)
 
-    def move(self):
-        """moves associated Transaction from current state to next"""
-        if not self.transaction:
-            raise InvalidStateTransitionError('{} does not have a Transaction that can be moved'.format(self))
-        self.transaction.move()
+    def test_fix(self):
+        """tests fixing an Item creates a new Transaction that can be moved into processing flow"""
+        item = self._create_item()
 
-    def error(self):
-        """moves associated Transaction from current state to error state"""
-        if not self.transaction:
-            raise InvalidStateTransitionError('{} does not have a Transaction that can be errored'.format(self))
-        self.transaction.error()
+        # verify fixing without a Transaction causes an error
+        with self.assertRaises(InvalidStateTransitionError):
+            item.fix()
+
+        # create Transaction for item
+        item.create_transaction()  # processing/originator
+
+        # verify fixing in initial state is invalid
+        with self.assertRaises(InvalidStateTransitionError):
+            item.fix()
+
+        # verify fixing in processing state is invalid
+        item.move()  # processing/routable
+        with self.assertRaises(InvalidStateTransitionError):
+            item.fix()
+
+        # verify fixing in completed state is invalid
+        item.move()  # completed/destination
+        with self.assertRaises(InvalidStateTransitionError):
+            item.fix()
+
+        error_item = self._create_item()
+        error_item.create_transaction()  # processing/originator
+        error_item.move()  # processing/routable
+        error_item.error()  # errored/routable
+        # retain transaction
+        error_transaction = error_item.transaction
+
+        # verify fixing transaction is created
+        error_item.fix()
+        self.assertEqual(error_item.transaction.status, TransactionStatus.FIXING)
+        self.assertEqual(error_item.transaction.location, TransactionLocation.ROUTABLE)
+        # verify different transaction is created
+        self.assertNotEqual(error_item.transaction, error_transaction)
+
+        # verify fixing in fixing state is invalid
+        with self.assertRaises(InvalidStateTransitionError):
+            error_item.fix()
+
+    def test_begin_refund(self):
+        """tests beginning an Item refund creates a new Transaction that can be refunded"""
+        item = self._create_item()
+
+        # verify refunding without a Transaction causes an error
+        with self.assertRaises(InvalidStateTransitionError):
+            item.begin_refund()
+
+        # create Transaction for item
+        item.create_transaction()  # processing/originator
+
+        # verify refunding in initial state is invalid
+        with self.assertRaises(InvalidStateTransitionError):
+            item.begin_refund()
+
+        # verify refunding in processing state is invalid
+        item.move()  # processing/routable
+        with self.assertRaises(InvalidStateTransitionError):
+            item.begin_refund()
+
+        # verify refunding in completed state is invalid
+        item.move()  # completed/destination
+        with self.assertRaises(InvalidStateTransitionError):
+            item.begin_refund()
+
+        error_item = self._create_item()
+        error_item.create_transaction()  # processing/originator
+        error_item.move()  # processing/routable
+        error_item.error()  # errored/routable
+        # retain transaction
+        error_transaction = error_item.transaction
+
+        # verify refunding transaction is created
+        error_item.begin_refund()
+        self.assertEqual(error_item.transaction.status, TransactionStatus.REFUNDING)
+        self.assertEqual(error_item.transaction.location, TransactionLocation.ROUTABLE)
+        # verify different transaction is created
+        self.assertNotEqual(error_item.transaction, error_transaction)
+
+        # verify refunding in refunding state is invalid
+        with self.assertRaises(InvalidStateTransitionError):
+            error_item.begin_refund()
 
 
 class TransactionTestCase(UUIDTestCase):
