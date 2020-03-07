@@ -1,7 +1,7 @@
 from django.test import TestCase
 from decimal import Decimal
 from items.models import Item, Transaction, TransactionLocation, TransactionStatus, \
-    InvalidStateTransitionError
+    InvalidStateTransitionError, ItemState
 from rest_framework import status
 from rest_framework.test import APIClient
 from urllib.parse import urljoin
@@ -289,6 +289,7 @@ class TransactionTestCase(UUIDTestCase):
         self.test_item = Item.objects.create(amount=amount)
 
     def _create_transaction(self, initial_status=None, initial_location=None):
+        """creates testable Transaction"""
         create_kwargs = {
             'item': self.test_item
         }
@@ -355,6 +356,118 @@ class TransactionTestCase(UUIDTestCase):
         )
         with self.assertRaises(InvalidStateTransitionError):
             destination_completed.error()
+
+    def test_update_item_status_successful_flow(self):
+        """tests updates made to Item based on status changes on the Transaction in the successful flow"""
+        # verify Item's initial status is blank
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify creating initial Transaction leaves Item in "processing" state
+        transaction = self.test_item.create_transaction()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify moving to processing does not change Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify moving to completed updates Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.RESOLVED)
+
+    def test_update_item_status_error_flow(self):
+        """tests updates made to Item based on status changes on the Transaction in the error flow"""
+        # verify Item's initial status is blank
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify creating initial Transaction leaves Item in "processing" state
+        transaction = self.test_item.create_transaction()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify moving to processing does not change Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify erroring Transaction moves Item to "error" state
+        transaction.error()
+        self.assertEqual(self.test_item.state, ItemState.ERROR)
+
+    def test_update_item_status_refund_item_flow(self):
+        """tests updates made to Item based on status changes on the Transaction in the refund item flow"""
+        # verify Item's initial status is blank
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify creating initial Transaction leaves Item in "processing" state
+        transaction = self.test_item.create_transaction()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify moving to processing does not change Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify erroring Transaction moves Item to "error" state
+        transaction.error()
+        self.assertEqual(self.test_item.state, ItemState.ERROR)
+
+        # verify beginning refund moves Item into "correcting" state
+        transaction = self.test_item.begin_refund()
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        # verify moving to completed moves Item into "resolved" state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.RESOLVED)
+
+    def test_update_item_status_fix_item_flow(self):
+        """tests updates made to Item based on status changes on the Transaction in the fix item flow"""
+        # verify Item's initial status is blank
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify creating initial Transaction leaves Item in "processing" state
+        transaction = self.test_item.create_transaction()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify moving to processing does not change Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify erroring Transaction moves Item to "error" state
+        transaction.error()
+        self.assertEqual(self.test_item.state, ItemState.ERROR)
+        self.assertEqual(transaction.status, TransactionStatus.ERROR)
+        self.assertIsNotNone(self.test_item.transaction)
+
+        # verify fixing moves Item into "correcting" state
+        transaction = self.test_item.fix()
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        # verify moving to puts Transaction in processing, but Item remains in "correcting" state
+        transaction.move()
+        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        # verify moving to completed updates Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.RESOLVED)
+
+    def test_update_item_status_multiple_fix_item_flow(self):
+        """tests updates made to Item based on status changes on the Transaction when the fix item flow is repeated"""
+        # verify Item's initial status is blank
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify creating initial Transaction leaves Item in "processing" state
+        transaction = self.test_item.create_transaction()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+        # verify moving to processing does not change Item state
+        transaction.move()
+        self.assertEqual(self.test_item.state, ItemState.PROCESSING)
+
+        # verify erroring Transaction moves Item to "error" state
+        transaction.error()
+        self.assertEqual(self.test_item.state, ItemState.ERROR)
+        # verify beginning refund moves Item into "correcting" state
+        transaction = self.test_item.fix()
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        # verify moving to puts Transaction in processing, but Item remains in "correcting" state
+        transaction.move()
+        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+
+        # verify moving to completed updates Item state
+        transaction.error()
+        self.assertEqual(self.test_item.state, ItemState.ERROR)
+        # verify fixing moves Item back into "correcting" state
+        transaction = self.test_item.fix()
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        # verify moving to puts Transaction in processing, but Item remains in "correcting" state
+        transaction.move()
+        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
+        self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        # verify moving to completed updates Item state
+        transaction.error()
+        self.assertEqual(self.test_item.state, ItemState.ERROR)
 
 
 class ItemApiTestCase(TestCase):

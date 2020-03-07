@@ -86,6 +86,9 @@ class Item(models.Model):
         'Transaction', null=True, blank=True, related_name='current_transaction', on_delete=models.SET_NULL
     )
     state = models.CharField(max_length=20, choices=ItemState.choices(), default=ItemState.PROCESSING)
+    has_errored = models.BooleanField(
+        default=False, help_text='Whether or not processing of this Item has ever errored'
+    )
 
     def __str__(self):
         return "Item<{}>".format(str(self.id))
@@ -113,11 +116,13 @@ class Item(models.Model):
         if not Transaction.is_valid_start_state(initial_status, initial_location):
             raise InvalidStateError('Invalid Status/Location provided to create a valid Transaction state')
 
-        transaction = Transaction.objects.create(
+        transaction = Transaction(
             item=self,
             status=initial_status,
-            location=initial_location
+            location=initial_location,
+            is_active=True
         )
+        transaction.save()
         # ENHANCEMENT: handle in DB transaction
         # ensure other Transactions for this item are inactive
         for existing_transaction in Transaction.objects.filter(item=self, is_active=True).exclude(id=transaction.id):
@@ -128,9 +133,13 @@ class Item(models.Model):
 
     def begin_refund(self):
         """creates new Transaction to begin refunding amount to originator"""
-        if not self.transaction or not self.transaction.status == TransactionStatus.ERROR:
+        if not self.transaction:
             # no refundable transaction associated with item
             raise InvalidStateTransitionError('{} does not have a Transaction that can be refunded'.format(self))
+        elif self.transaction.status != TransactionStatus.ERROR:
+            # transaction not in fixable status
+            raise InvalidStateTransitionError('Transaction {} is not in a state that can be refunded'.format(self.transaction))
+
         # create a new Transaction that can be refunded
         return self.create_transaction(
             initial_status=TransactionStatus.REFUNDING, initial_location=TransactionLocation.ROUTABLE
@@ -138,9 +147,12 @@ class Item(models.Model):
 
     def fix(self):
         """creates new Transaction to begin fixing an errored Transaction"""
-        if not self.transaction or not self.transaction.status == TransactionStatus.ERROR:
+        if not self.transaction:
             # no refundable transaction associated with item
             raise InvalidStateTransitionError('{} does not have a Transaction that can be fixed'.format(self))
+        elif self.transaction.status != TransactionStatus.ERROR:
+            # transaction not in fixable status
+            raise InvalidStateTransitionError('Transaction {} is not in a state that can be fixed'.format(self.transaction))
         # create a new Transaction that can be fixed
         return self.create_transaction(
             initial_status=TransactionStatus.FIXING, initial_location=TransactionLocation.ROUTABLE
@@ -182,12 +194,10 @@ class Transaction(models.Model):
         return "Transaction<{}>".format(str(self.id))
 
     def save(self, *args, **kwargs):
-        is_new = not self.id
+        is_new = self._state.adding
         result = super(Transaction, self).save(*args, **kwargs)
-        if is_new and self.item and self.item.state != ItemState.PROCESSING:
-            # Transaction just created - reset Item to processing from previous state
-            self.item.state = ItemState.PROCESSING
-            self.item.save()
+        if is_new and self.item:
+            self.update_item_status(new_transaction=True)
 
         return result
 
@@ -231,18 +241,35 @@ class Transaction(models.Model):
         self.save()
         self.update_item_status()
 
-    def update_item_status(self):
+    def update_item_status(self, new_transaction=False):
         """updates item status based on current status"""
         if not self.is_active:
             # not currently the active Transaction for an Item so state change does not affect it
             return
 
+        update = False
         new_state = ItemState.PROCESSING
-        if self.status == TransactionStatus.ERROR:
+
+        if new_transaction:
+            # newly-created Transaction resets Item status new processing/correcting
+            if self.item.has_errored:
+                # Transaction has been attempted before but errored
+                new_state = ItemState.CORRECTING
+            else:
+                # first Transaction just created
+                new_state = ItemState.PROCESSING
+        elif self.status == TransactionStatus.ERROR:
+            # errored Transaction resets Item status to error
             new_state = ItemState.ERROR
-        elif self.status == TransactionStatus.COMPLETED:
+            if not self.item.has_errored:
+                # set flag for having errored during processing
+                self.item.has_errored = True
+                update = True
+        elif self.status in (TransactionStatus.COMPLETED, TransactionStatus.REFUNDED):
+            # reaching positive finish state resets Item status to resolved
             new_state = ItemState.RESOLVED
-        if new_state != self.item.state:
+
+        if update or new_state != self.item.state:
             self.item.state = new_state
             self.item.save()
 
