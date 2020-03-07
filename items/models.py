@@ -46,6 +46,9 @@ class Item(models.Model):
     )
     state = models.CharField(max_length=20, choices=ItemState.choices(), default=ItemState.PROCESSING)
 
+    def __str__(self):
+        return "Item<{}>".format(str(self.id))
+
     @property
     def status(self):
         """current status of Transaction associated with Item, if any"""
@@ -134,6 +137,9 @@ class Transaction(models.Model):
         default=True,
         help_text='Whether or not this Transaction is currently the active Transaction for its Item'
     )
+
+    def __str__(self):
+        return "Transaction<{}>".format(str(self.id))
 
     def save(self, *args, **kwargs):
         is_new = not self.id
