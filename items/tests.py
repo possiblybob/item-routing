@@ -419,16 +419,19 @@ class TransactionTestCase(UUIDTestCase):
         # verify erroring Transaction moves Item to "error" state
         transaction.error()
         self.assertEqual(self.test_item.state, ItemState.ERROR)
+        self.assertTrue(self.test_item.has_errored)
         self.assertEqual(transaction.status, TransactionStatus.ERROR)
         self.assertIsNotNone(self.test_item.transaction)
+        original_transaction = self.test_item.transaction
 
         # verify fixing moves Item into "correcting" state
         transaction = self.test_item.fix()
+        self.assertNotEqual(transaction, original_transaction)
         self.assertEqual(self.test_item.state, ItemState.CORRECTING)
         # verify moving to puts Transaction in processing, but Item remains in "correcting" state
         transaction.move()
-        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
         self.assertEqual(self.test_item.state, ItemState.CORRECTING)
+        self.assertEqual(transaction.status, TransactionStatus.PROCESSING)
         # verify moving to completed updates Item state
         transaction.move()
         self.assertEqual(self.test_item.state, ItemState.RESOLVED)
