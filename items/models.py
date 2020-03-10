@@ -248,7 +248,7 @@ class Transaction(models.Model):
             return
 
         update = False
-        new_state = ItemState.PROCESSING
+        new_state = None
 
         if new_transaction:
             # newly-created Transaction resets Item status new processing/correcting
@@ -269,7 +269,7 @@ class Transaction(models.Model):
             # reaching positive finish state resets Item status to resolved
             new_state = ItemState.RESOLVED
 
-        if update or new_state != self.item.state:
+        if update or new_state and new_state != self.item.state:
             self.item.state = new_state
             self.item.save()
 
